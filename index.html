@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://d3js.org/topojson.v3.min.js"></script>
+  <script src="https://unpkg.com/d3-simple-slider"></script>
+
+  <title>Info5100 Project2</title>
+  <style>
+    html {
+      font-family: sans-serif;
+    }
+
+    h6,
+    h5 {
+      margin-top: 25px;
+      margin-bottom: 8px;
+    }
+
+    .filter {}
+
+    #slider-title {
+      margin-bottom: 0;
+    }
+
+    .container {
+      margin: 30px;
+    }
+
+    .map {
+      display: flex;
+      align-items: space-around;
+    }
+
+    .map div {
+      flex-grow: 1;
+    }
+
+    .polygon {
+      fill: #f7f7f7;
+    }
+
+    .outline {
+      stroke: black;
+      stroke-width: 2px;
+      fill: none;
+    }
+
+    .label {
+      font-size: 16px;
+    }
+
+    .info {
+      margin-bottom: 20px;
+    }
+
+    .info div {
+      display: flex;
+      width: 100%;
+      height: 50px;
+    }
+
+    .info h5 {
+      margin: 5px 0;
+    }
+
+    .info p {
+      font-size: 16px;
+      margin: 5px 0px 5px 10px;
+    }
+
+    #legend {
+      position: absolute;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Project 2</h1>
+    <h2>New York City Shooting Incidents Distribution</h2>
+    <svg id="legend" height="500" width="450"></svg>
+    <div class="map">
+
+      <div id="map-nyc">
+      </div>
+
+      <script>
+        const Window_Width = window.screen.width;
+        const Window_Margins = 30;
+        const Window_Width_Inuse = Window_Width - 2 * Window_Margins;
+        const map = d3.select("#map-nyc").append("svg")
+          .attr("id", "NewYorkMap")
+          .attr("width", Window_Width_Inuse * 0.55)
+          .attr("height", 800)
+          .style("margin-right", 20)
+
+        //const map = d3.select("svg#NewYorkMap");
+        const width = map.attr("width");
+        const height = map.attr("height");
+        const margin = { top: 10, right: 10, bottom: 50, left: 50 };
+        const mapWidth = width - margin.left - margin.right;
+        const mapHeight = height - margin.top - margin.bottom;
+        const annotations = map.append("g").attr("id", "annotations");
+        const mapArea = map
+          .append("g")
+          .attr("id", "points")
+          .attr("transform", `translate(${margin.left},${margin.top})`);
+        const mapLegend = map
+          .append("g")
+          .attr("id", "legend")
+          .attr("transform", "translate(10,30)")
+
+        const requestData = async function () {
+          //load map data
+          const NewYork = await d3.json("Borough Boundaries.geojson");
+          //load incident to date data
+          const incidentHistory = await d3.csv(
+            "NYPD_Shooting_Incident_Data__Historic_.csv"
+          );
+
+          const mapProjection = d3
+            .geoMercator()
+            .fitSize([mapWidth, mapHeight], NewYork);
+          const path = d3.geoPath().projection(mapProjection);
+
+          //base map
+          let wholeMap = mapArea
+            .selectAll("path.polygon")
+            .data(NewYork.features)
+            .join("path")
+            .attr("class", "polygon")
+            .attr("d", path)
+            .attr("stroke", "grey");
+
+
+
+          // vicitm circle size
+          const Victim_Circle_Size_Initial = 4;
+          const Victim_Circle_Size_Hover = 10;
+          const Inactive_Victim_Opa = 0.5;
+
+          // age color scale
+          const ageColors = [
+            "#ffbe0b",
+            "#fb5607",
+            "#ff006e",
+            "#8338ec",
+            "#3a86ff",
+          ];
+          const ageColorScale = d3
+            .scaleOrdinal()
+            .domain(["0-17", "18-24", "25-44", "45-64", "65+"])
+            .range(ageColors);
+
+          //get year extent
+          const timeExtent = d3.extent(incidentHistory, (d) =>
+            formatYear(d.OCCUR_DATE)
+          );
+
+          //create time slider
+          const gTime = d3
+            .select("div#slider")
+            .append("svg")
+            .attr("width", 560)
+            .attr("height", 100);
+
+          const sliderArea = gTime
+            .append("g")
+            .attr("transform", "translate(30,30)");
+
+          //set slider bar range
+          const dataTime = d3
+            .range(timeExtent[0], timeExtent[1] + 1)
+            .map(function (d) {
+              return new Date(d, 01, 01);
+            });
+
+          //default view to show data of latest year
+          const defaultYear = timeExtent[1];
+          let selectedYear = defaultYear;
+
+          let showFemale = true;
+          let showMale = true;
+
+          // filter data based on year slider and other options
+          let filteredData = [];
+          function filterData() {
+            filteredData = [];
+            for (let d of incidentHistory) {
+              //filter year
+              if (formatYear(d.OCCUR_DATE) != selectedYear) continue;
+              if (!showFemale && d.VIC_SEX == "F") continue;
+              if (!showMale && d.VIC_SEX == "M") continue;
+
+              filteredData.push(d);
+            }
+          }
+          let zoomTransform = { k: 1.0, x: margin.left, y: margin.top };
+          // draw initial circles for victs
+          filterData();
+          let vic = mapArea
+            .selectAll("circle")
+            .data(filteredData)
+            .join("circle")
+            .attr("class", "incident")
+            .attr("cx", d => mapProjection([d.Longitude, d.Latitude])[0])
+            .attr("cy", d => mapProjection([d.Longitude, d.Latitude])[1])
+            .attr("r", Victim_Circle_Size_Initial)
+            .style("fill", d => ageColorScale(d.VIC_AGE_GROUP))
+            .attr("opacity", Inactive_Victim_Opa)
+            .on("zoom", zoomIn)
+            .on("mouseover", hoverVictim)
+            .on("mouseout", leaveVictim)
+
+          // call updateVic after change a selection or drag the slider
+          function updateVic() {
+            filterData();
+            mapArea
+              .selectAll("circle")
+              .data(filteredData)
+              .join(
+                (enter) =>
+                  enter
+                    .append("circle")
+                    .attr("class", "incident")
+                    .attr("cx", d => mapProjection([d.Longitude, d.Latitude])[0])
+                    .attr("cy", d => mapProjection([d.Longitude, d.Latitude])[1])
+                    .attr("r", Victim_Circle_Size_Initial / zoomTransform.k)
+                    .style("fill", d => ageColorScale(d.VIC_AGE_GROUP))
+                    .attr("opacity", Inactive_Victim_Opa)
+                    .on("mouseover", hoverVictim)
+                    .on("mouseout", leaveVictim)
+                    .call((enter) =>
+                      enter.transition().attr("opacity", Inactive_Victim_Opa)
+                    ),
+                (update) =>
+                  update.call((update) =>
+                    update
+                      .attr("class", "incident")
+                      .attr("cx", d => mapProjection([d.Longitude, d.Latitude])[0])
+                      .attr("cy", d => mapProjection([d.Longitude, d.Latitude])[1])
+                      .attr("r", Victim_Circle_Size_Initial / zoomTransform.k)
+                      .on("mouseover", hoverVictim)
+                      .on("mouseout", leaveVictim)
+                      .style("fill", d => ageColorScale(d.VIC_AGE_GROUP))
+                      .attr("opacity", Inactive_Victim_Opa)
+                  ),
+                (exit) =>
+                  exit.call((exit) => exit.transition().attr("opacity", 0).remove())
+              );
+          }
+
+          //zoom
+          const zoom = d3
+            .zoom()
+            .scaleExtent([1, 10])
+            .translateExtent([
+              [-300, -300],
+              [mapWidth, mapHeight],
+            ])
+            .on("zoom", zoomIn);
+
+          map.call(zoom);
+
+          function zoomIn(event) {
+            //set global let zoomTransform;
+            zoomTransform = event.transform;
+            wholeMap.attr("stroke-width", 1 / event.transform.k);
+            mapArea.attr("transform", event.transform)
+              .selectAll("circle").attr("r", Victim_Circle_Size_Initial / event.transform.k)
+          }
+
+          //use sliderBar to control which year of victims are drawn
+          let sliderTime = d3
+            .sliderBottom()
+            .min(new Date(timeExtent[0], 01, 01))
+            .max(new Date(timeExtent[1], 12, 31))
+            .step(1000 * 60 * 60 * 24 * 365)
+            .width(500)
+            .tickFormat(d3.timeFormat("%Y"))
+            .tickValues(dataTime)
+            .default(new Date(timeExtent[1], 01, 01))
+            .on("end", (val) => {
+              if (!event.active) {
+                selectedYear = val.getFullYear();
+                updateVic();
+                updateRaceBars();
+                updateAgeBars();
+              }
+            });
+
+          sliderArea.call(sliderTime);
+
+          d3.select("p#time").text(d3.timeFormat("%Y")(sliderTime.value()));
+
+          const Active_Btn_Color = "#ffbe0b";
+          const Inactive_Btn_Color = "#aaa";
+
+          //append gender selections
+          const genderOption = ["Male", "Female", "Clear"];
+          genderOption.forEach((text) => {
+            d3.select("div#button-bar")
+              .append("button")
+              .attr("id", `gender-btn-${text}`)
+              .text(text)
+              .style("background-color", Active_Btn_Color)
+              .style("margin-right", "10px")
+              .style("border-radius", "5px")
+              .on("click", filterGender);
+          });
+
+          //set gender btn color and update dots
+          function filterGender() {
+            let gender = d3.select(this).text();
+            if (gender == "Female") {
+              showFemale = !showFemale;
+              if (showFemale)
+                d3.select("#gender-btn-Female").style(
+                  "background-color",
+                  Active_Btn_Color
+                );
+              else
+                d3.select("#gender-btn-Female").style("background", "none");
+            }
+
+            if (gender == "Male") {
+              showMale = !showMale;
+              if (showMale)
+                d3.select("#gender-btn-Male").style(
+                  "background-color",
+                  Active_Btn_Color
+                );
+              else d3.select("#gender-btn-Male").style("background", "none");
+            }
+
+            if (gender == "Clear") {
+              showFemale = true;
+              showMale = true;
+              d3.select("#gender-btn-Female").style(
+                "background-color",
+                Active_Btn_Color
+              );
+              d3.select("#gender-btn-Male").style(
+                "background-color",
+                Active_Btn_Color
+              );
+            }
+
+            updateVic();
+            updateRaceBars();
+            updateAgeBars();
+          }
+
+          //create tooltip for hovering
+          let layerText = map.append("g").attr("id", "textBox");
+          let labelBox = layerText
+            .append("rect")
+            .attr("id", "label-box")
+            .attr("height", 50)
+            .style("fill", "#000")
+            .style("opacity", 0);
+
+          let label1 = layerText
+            .append("text")
+          let label2 = layerText
+            .append("text")
+
+          layerText.selectAll("text")
+            .attr("class", "label")
+            .style("fill", "#fff")
+            .attr("text-anchor", "middle")
+            .attr("alignment-baseline", "middle");
+
+          let boxHeight = 0;
+          let boxWidth = 0;
+
+          //set tooptip text
+          //first line is age
+          //second line is race
+          function setLabelText(d, x, y) {
+            label1.text("Victim age: " + d.VIC_AGE_GROUP);
+            let vicRace = d.VIC_RACE == null ? "/" : d.VIC_RACE;
+            label2.text("Victim race: " + vicRace);
+
+            //set box width based on string length
+            let len = vicRace.length > 8 ? vicRace.length : 8;
+            boxWidth = len * 15 + 30;
+
+            //handle edge case so that tooltips for dots close to boundary don't get cropped
+            let offsetY = y < 50 ? 100 : -10;
+            let offsetX = x > 750 ? -50 : 0;
+
+            label1.attr("x", 0).attr("y", - 27);
+            label2.attr("x", 0).attr("y", - 10);
+
+            labelBox
+              .attr("x", - boxWidth / 2.0)
+              .attr("y", - 30 - 15)
+              .attr("width", boxWidth)
+              .style("opacity", 0.5);
+
+            layerText.attr("transform", `translate(${offsetX + x},${offsetY + y - 10})`);
+          }
+
+          // remove tooltip
+          function clearTooptip() {
+            labelBox.style("opacity", 0);
+            label1.text("");
+            label2.text("");
+          }
+
+          //hover on victim dot, show tooltip
+          function hoverVictim(event, d) {
+
+            //scale factor
+            let factor = zoomTransform.k;
+
+            let x = (Number(d3.select(this).attr("cx"))) * factor + zoomTransform.x;
+            let y = Number(d3.select(this).attr("cy")) * factor + zoomTransform.y;
+
+            //y = d3.zoomTransform(y);
+            setLabelText(d, x, y);
+
+            d3.select(this)
+              .transition()
+              .duration(200)
+              .attr("opacity", 1)
+              .attr("r", Victim_Circle_Size_Hover / factor)
+          }
+
+          //leave victim dot, clear tooltip
+          function leaveVictim(event, d) {
+            let factor = zoomTransform.k
+            let year = formatYear(d.OCCUR_DATE);
+            if (year != selectedYear) return;
+
+            clearTooptip();
+            d3.select(this)
+              .transition()
+              .duration(200)
+              .attr("opacity", 0.5)
+              .attr("r", Victim_Circle_Size_Initial / factor)
+              ;
+          }
+
+          //get year from the date
+          function formatYear(rawDate) {
+            let date = new Date(rawDate);
+            return date.getFullYear();
+          }
+
+          //draw age legend
+          const keys = ["<18", "18-24", "25-44", "45-64", "65+"];
+          const legend = d3.select("#legend");
+          const size = 15;
+          const gap = 35;
+
+          legend
+            .selectAll("mydots")
+            .data(keys)
+            .enter()
+            .append("circle")
+            .attr("cx", 11)
+            .attr("cy", (d, i) => 36 + gap * i) // 100 is where the first dot appears. 25 is the distance between dots
+            .attr("r", 6)
+            .style("fill", (d) => ageColorScale(d));
+
+          legend
+            .selectAll("mylabels")
+            .data(keys)
+            .enter()
+            .append("text")
+            .attr("x", 22)
+            .attr("y", (d, i) => 39 + gap * i) // 100 is where the first dot appears. 25 is the distance between dots
+            .style("fill", (d) => ageColorScale(d))
+            .text(function (d) {
+              return d;
+            })
+            .attr("text-anchor", "left")
+            .style("alignment-baseline", "middle");
+
+          legend
+            .append("text")
+            .attr("x", 0)
+            .attr("y", 15)
+            .text("Victim Age Group Color Scale")
+            .style("font-size", 20);
+
+          ////////////////////////// Race Bar Chart Code /////////////////
+
+          function getUpdatedTitle(startingPhrase) {
+            if (showFemale && showMale) {
+              return startingPhrase + selectedYear + ", " + "Male and Female";
+            } else if (showFemale) {
+              return startingPhrase + selectedYear + ", " + "Female";
+            } else if (showMale) {
+              return startingPhrase + selectedYear + ", " + "Male";
+            } else {
+              return (
+                startingPhrase + selectedYear + ", " + "No gender selected"
+              );
+            }
+          }
+          const divRaceBarChart = d3
+            .select("div#RaceBarChart")
+            .append("svg")
+            .attr("width", Window_Width_Inuse * 0.4)
+            .attr("height", 210)
+            .attr("id", "RaceChart");
+
+          const outerDivRaceBarChart = d3
+            .select("div#RaceBarChartOuterDiv")
+            .select("h5#title");
+
+          const BarSvg = d3.select("svg#RaceChart");
+          const BarSvgWidth = BarSvg.attr("width");
+          const BarSvgHeight = BarSvg.attr("height");
+          const BarMargin = { top: 10, right: 10, bottom: 60, left: 50 };
+          const BarChartWidth =
+            BarSvgWidth - BarMargin.left - BarMargin.right;
+          const BarChartHeight =
+            BarSvgHeight - BarMargin.top - BarMargin.bottom;
+          let BarAnnotations = BarSvg.append("g").attr("id", "annotations");
+          let BarChartArea = BarSvg.append("g")
+            .attr("id", "points")
+            .attr(
+              "transform",
+              `translate(${BarMargin.left},${BarMargin.top})`
+            );
+          var races = [
+            "BLACK",
+            "WHITE HISPANIC",
+            "BLACK HISPANIC",
+            "WHITE",
+            "ASIAN / PACIFIC ISLANDER",
+            "UNKNOWN",
+          ];
+
+          const racesScale = d3
+            .scaleBand()
+            .domain(races)
+            .range([0, BarChartWidth])
+            .padding(0.1);
+          let bottomAxis = d3.axisBottom(racesScale);
+          BarAnnotations.append("g")
+            .attr("class", "x axis")
+            .attr(
+              "transform",
+              `translate(${BarMargin.left},${BarChartHeight + BarMargin.top + 10
+              })`
+            )
+            .call(bottomAxis)
+            .selectAll("text")
+            .style("text-anchor", "center")
+            .style("font-size", 10)
+          //.attr("dx", "-.8em")
+          // .attr("dy", ".15em")
+          // .attr("transform", "rotate(-10)");
+
+          let leftAxis = d3.axisLeft();
+          let leftAxisG = BarAnnotations.append("g")
+            .attr("class", "y axis")
+            .attr(
+              "transform",
+              `translate(${BarMargin.left - 10},${BarMargin.top})`
+            );
+          function updateRaceBars() {
+            outerDivRaceBarChart.text(
+              getUpdatedTitle("Count of Victims by Race for ")
+            );
+            var raceVictimCount = {};
+            filteredData.forEach((d) => {
+              if (d["VIC_RACE"]) {
+                if (d["VIC_RACE"] in raceVictimCount) {
+                  raceVictimCount[d["VIC_RACE"]] += 1;
+                } else {
+                  raceVictimCount[d["VIC_RACE"]] = 0;
+                }
+              }
+            });
+            var races = [];
+            var racesCount = [];
+
+            for (const r in raceVictimCount) {
+              races.push(r);
+              racesCount.push(raceVictimCount[r]);
+            }
+
+            const RaceCountScale = d3
+              .scaleLinear()
+              .domain([0, Math.max(...racesCount)])
+              .range([BarChartHeight, 0]);
+
+            leftAxis.scale(RaceCountScale);
+            leftAxisG.call(leftAxis);
+            BarChartArea.selectAll("rect.bar")
+              .data(races)
+              .join("rect")
+              .attr("class", "bar")
+              .attr("fill", "steelblue")
+              .attr("x", (d) => racesScale(d))
+              .attr("y", (d) => RaceCountScale(raceVictimCount[d]))
+              .attr(
+                "height",
+                (d) => RaceCountScale(0) - RaceCountScale(raceVictimCount[d])
+              )
+              .attr("width", racesScale.bandwidth());
+          }
+          const divAgeBarChart = d3
+            .select("div#AgeBarChart")
+            .append("svg")
+            .attr("width", 480)
+            .attr("height", 200)
+            .attr("id", "AgeChart");
+
+          //////////////////// Age Bar Chart Code ///////////////////////////
+
+          const outerDivAgeBarChart = d3
+            .select("div#AgeBarChartOuterDiv")
+            .select("h5#title");
+
+          const AgeBarSvg = d3.select("svg#AgeChart");
+          const AgeBarSvgWidth = AgeBarSvg.attr("width");
+          const AgeBarSvgHeight = AgeBarSvg.attr("height");
+          const AgeBarMargin = { top: 10, right: 10, bottom: 50, left: 50 };
+          const AgeBarChartWidth =
+            AgeBarSvgWidth - AgeBarMargin.left - AgeBarMargin.right;
+          const AgeBarChartHeight =
+            AgeBarSvgHeight - AgeBarMargin.top - AgeBarMargin.bottom;
+          let AgeBarAnnotations = AgeBarSvg.append("g").attr(
+            "id",
+            "Ageannotations"
+          );
+          let AgeBarChartArea = AgeBarSvg.append("g")
+            .attr("id", "Agepoints")
+            .attr(
+              "transform",
+              `translate(${AgeBarMargin.left},${AgeBarMargin.top})`
+            );
+
+          var ages = ["<18", "18-24", "25-44", "45-64", "65+"];
+          const agesScale = d3
+            .scaleBand()
+            .domain(ages)
+            .range([0, AgeBarChartWidth])
+            .padding(0.1);
+          let agebottomAxis = d3.axisBottom(agesScale);
+          AgeBarAnnotations.append("g")
+            .attr("class", "x axis")
+            .attr(
+              "transform",
+              `translate(${AgeBarMargin.left},${AgeBarChartHeight + AgeBarMargin.top + 10
+              })`
+            )
+            .call(agebottomAxis)
+            .selectAll("text")
+            .style("text-anchor", "center")
+            .style("font-size", 15)
+            .attr("transform", "translate(0,5)")
+
+
+          let ageleftAxis = d3.axisLeft();
+          let ageleftAxisG = AgeBarAnnotations.append("g")
+            .attr("class", "y axis")
+            .attr(
+              "transform",
+              `translate(${AgeBarMargin.left - 10},${AgeBarMargin.top})`
+            );
+          function updateAgeBars(year) {
+            outerDivAgeBarChart.text(
+              getUpdatedTitle("Count of Victims by Age for ")
+            );
+            var ageVictimCount = {};
+            filteredData.forEach((d) => {
+              if (d["VIC_AGE_GROUP"]) {
+                if (d["VIC_AGE_GROUP"] in ageVictimCount) {
+                  ageVictimCount[d["VIC_AGE_GROUP"]] += 1;
+                } else {
+                  ageVictimCount[d["VIC_AGE_GROUP"]] = 0;
+                }
+              }
+            });
+            var ages = [];
+            var agesCount = [];
+
+            for (const r in ageVictimCount) {
+              ages.push(r);
+              agesCount.push(ageVictimCount[r]);
+            }
+            const AgesCountScale = d3
+              .scaleLinear()
+              .domain([0, Math.max(...agesCount)])
+              .range([AgeBarChartHeight, 0]);
+
+            ageleftAxis.scale(AgesCountScale);
+            ageleftAxisG.call(ageleftAxis);
+            AgeBarChartArea.selectAll("rect.agebar")
+              .data(ages)
+              .join("rect")
+              .attr("class", "agebar")
+              .attr("fill", (d) => ageColorScale(d))
+              .attr("x", (d) => agesScale(d))
+              .attr("y", (d) => AgesCountScale(ageVictimCount[d]))
+              .attr(
+                "height",
+                (d) => AgesCountScale(0) - AgesCountScale(ageVictimCount[d])
+              )
+              .attr("width", agesScale.bandwidth());
+          }
+          updateRaceBars();
+          updateAgeBars();
+
+
+          function insertLinebreaks(d) {
+            var el = d3.select(this);
+            d = d.replace(' /', '/')
+            var words = d.split(' ');
+            el.text('');
+            for (let i = 0; i < words.length; i++) {
+              let tspan = el.append('tspan').text(words[i]);
+              if (i > 0)
+                tspan.attr('x', 0).attr('dy', '15');
+            }
+          };
+          divRaceBarChart.selectAll('g.x.axis g text').each(insertLinebreaks);
+        };
+        requestData();
+      </script>
+      <div>
+        <div>
+          <h5>Victim Age Group:</h5>
+          <div id="button-bar"></div>
+        </div>
+        <div>
+          <h5>Filter incidents by year:</h5>
+          <div id="slider"></div>
+        </div>
+        <div id="RaceBarChartOuterDiv">
+          <h5 id="title"></h5>
+          <div id="RaceBarChart"></div>
+        </div>
+        <div id="AgeBarChartOuterDiv">
+          <h5 id="title"></h5>
+          <div id="AgeBarChart"></div>
+        </div>
+
+
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>
